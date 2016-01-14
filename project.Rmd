@@ -1,0 +1,101 @@
+---
+title: "Coursera Project: Predict if barbell lifts are properly done"
+author: "Gurmeet Singh"
+date: "January 13, 2016"
+output: 
+ html_document:
+ keep_md: true
+---
+
+##Introduction: 
+In this project, the goal is to *predict how well someone is performing a barbell lift* based on data collected during a study. The data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants was used to quantify how well they are performing barbell lifts. This was done by having them perform the lifts correctly and incorrectly in 5 different ways and labelling each observation (corresponding to a lift) labeled appropriately in the data set. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). [The training data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+[The test data](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+###How the model was built
+
+I decided to try a "Random Forest" learning method since it is very tolerant of missing data and noise in general which appeared to be the case for this dataset when looking at the ```summary()``` results on the data. This method can also provide feedback on what features were more important.
+
+Here are the steps to read data, build model and predict:
+
+```{r, results='hide', message=F, warning=F}
+
+library(h2o)
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+
+#Discard columns 1-7 (not observations)
+train <- training[,-c(1:7)]
+test <- testing[,-c(1:7)]
+
+#Remove columns not to be used as features
+features <- colnames(train)[!(colnames(train) %in% c("classe"))]
+
+#Include the prediction column in training set only
+train <- train[,c("classe", features)]
+test <- test[,c(features)]
+
+#Use h2o package for prediction, I've used this
+#frequently in the past for Kaggle comptetitions.
+h2o.init(nthreads=18,max_mem_size='48G')
+hexTrain <- as.h2o(train)
+
+cat("Fitting...\n")
+rfHex <- h2o.randomForest(x=features, 
+                          y="classe", 
+                          ntrees = 200, 
+                          max_depth = 16, 
+                          nbins_cats = 6, 
+                          training_frame=hexTrain)
+summary(rfHex)
+
+#Predict on test set
+testHex <- as.h2o(test)
+predictions<- as.data.frame(h2o.predict(rfHex,testHex))
+```
+
+```{r}
+#Show the predicted values
+predictions[[1]]
+```
+
+The following plots/data show that some variable are much more important than others.
+
+```{r}
+#Display variable importance as bar plot
+v <- rfHex@model$variable_importances
+barplot(v$scaled_importance)
+
+# This shows that the variable importance falls off sharply 
+# after the first 50
+nrow(v[v$scaled_importance > 0.1,]); nrow(v[v$scaled_importance > 0.01,])
+
+#Some of the most important features
+v[v$scaled_importance > 0.1,]$variable[1:10]
+```
+
+I did a prediction with just the top 50 most important features and still obtained the same (perfect) prediction results on the test set.
+
+### How was cross validation done
+
+Cross validation was done by splitting 67% of the data into training set and 33% into the cross validation set. The classification accuracy was 99.8% (3 misclassifications in 4359 observations - 0.16%). Since the cross validation accuracy is quite high, no further refinement of the methodology was deemed necessary, not to mention, the results on the test set scored 20/20 on the quiz. I used the entire data set in the "pml-training.csv" file for modeling that was used to predict the test set since cross validation didn't flag any concerns.
+
+```{r, eval=F}
+inTrain <- createDataPartition(y=train$classe, p=0.667, list=F)
+train <- train[inTrain,]
+cv <- train[-inTrain,]
+#Trin the model here, just as done previously.
+cvHex <- as.h2o(cv)
+cvpred<- as.data.frame(h2o.predict(rfHex,cvHex))
+missClass <- function(values,prediction){ (sum(predictions == values))/length(values)}
+missClass(as.character(cv$classe),as.character(cvpred$predict))
+```
+
+```
+# [1] 0.001605873
+```
+
+### Other notes
+
+The prediction computation using 152 column predictors runs in less than two minutes on a 24 cpu core, 48GB linux server. With reduced (50) predictors, in one minute with same accuracy.
+
+The content of this report is authored in RStudio using R Markdown format and converted to HTML using "Knit HTML" command. The R Markdown file itself can be found on[GitHub](https://github.com/swiftgurmeet/coursera-pml-project)
